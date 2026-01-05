@@ -1,16 +1,16 @@
 import express from "express";
 import { createCanvas, registerFont } from "canvas";
-import fs from "fs";
+import fetch from "node-fetch";
 
 const app = express();
 app.use(express.json());
 
-// Register Tamil font (Linux-safe)
+// ---------------- FONT ----------------
 registerFont("./fonts/NotoSansTamil-Regular.ttf", {
   family: "Tamil"
 });
 
-// Image generator function
+// ---------------- IMAGE GENERATOR ----------------
 function generateCard(data) {
   const canvas = createCanvas(1080, 1080);
   const ctx = canvas.getContext("2d");
@@ -35,7 +35,8 @@ function generateCard(data) {
   return canvas.toBuffer("image/png");
 }
 
-// API endpoint
+// ---------------- EXISTING ENDPOINT ----------------
+// JSON → Image (already working)
 app.post("/generate-card", (req, res) => {
   const { title, points } = req.body;
 
@@ -44,12 +45,59 @@ app.post("/generate-card", (req, res) => {
   }
 
   const imageBuffer = generateCard({ title, points });
-
   res.setHeader("Content-Type", "image/png");
   res.send(imageBuffer);
 });
 
-// Render provides PORT
+// ---------------- NEW ENDPOINT ----------------
+// Tamil Text → AI → Image
+app.post("/ai-generate-card", async (req, res) => {
+  try {
+    const { text } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+
+    // Call OpenAI
+    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a Tamil text processor. Convert the input Tamil text into ONE short title and 3–5 short bullet points. Output ONLY valid JSON in this format: {\"title\":\"\",\"points\":[]}"
+          },
+          { role: "user", content: text }
+        ],
+        temperature: 0.2
+      })
+    });
+
+    const aiData = await aiResponse.json();
+    const parsed = JSON.parse(aiData.choices[0].message.content);
+
+    const imageBuffer = generateCard({
+      title: parsed.title,
+      points: parsed.points
+    });
+
+    res.setHeader("Content-Type", "image/png");
+    res.send(imageBuffer);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "AI generation failed" });
+  }
+});
+
+// ---------------- SERVER ----------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Image API running on port", PORT);
