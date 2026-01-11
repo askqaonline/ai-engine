@@ -10,6 +10,28 @@ registerFont("./fonts/NotoSansTamil-Regular.ttf", {
   family: "Tamil"
 });
 
+function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(" ");
+  let line = "";
+
+  for (let n = 0; n < words.length; n++) {
+    const testLine = line + words[n] + " ";
+    const metrics = ctx.measureText(testLine);
+    const testWidth = metrics.width;
+
+    if (testWidth > maxWidth && n > 0) {
+      ctx.fillText(line, x, y);
+      line = words[n] + " ";
+      y += lineHeight;
+    } else {
+      line = testLine;
+    }
+  }
+  ctx.fillText(line, x, y);
+  return y + lineHeight;
+}
+
+
 // ---------------- IMAGE GENERATOR ----------------
 function generateCard(data) {
   const canvas = createCanvas(1080, 1080);
@@ -22,15 +44,20 @@ function generateCard(data) {
   // Title
   ctx.fillStyle = "#000000";
   ctx.font = "50px Tamil";
-  ctx.fillText(data.title, 60, 120);
+drawWrappedText(ctx, data.title, 60, 120, 960, 64);
+
 
   // Points
   ctx.font = "36px Tamil";
-  let y = 220;
-  for (const p of data.points) {
-    ctx.fillText("• " + p, 60, y);
-    y += 60;
-  }
+let y = 220;
+const maxWidth = 960;
+const lineHeight = 52;
+
+for (const p of data.points) {
+  y = drawWrappedText(ctx, "• " + p, 60, y, maxWidth, lineHeight);
+  y += 10;
+}
+
 
   return canvas.toBuffer("image/png");
 }
