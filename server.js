@@ -10,6 +10,7 @@ registerFont("./fonts/NotoSansTamil-Regular.ttf", {
   family: "Tamil"
 });
 
+// ---------------- TEXT WRAP HELPER ----------------
 function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
   const words = text.split(" ");
   let line = "";
@@ -17,9 +18,8 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
   for (let n = 0; n < words.length; n++) {
     const testLine = line + words[n] + " ";
     const metrics = ctx.measureText(testLine);
-    const testWidth = metrics.width;
 
-    if (testWidth > maxWidth && n > 0) {
+    if (metrics.width > maxWidth && n > 0) {
       ctx.fillText(line, x, y);
       line = words[n] + " ";
       y += lineHeight;
@@ -31,39 +31,31 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
   return y + lineHeight;
 }
 
-
-// ---------------- IMAGE GENERATOR ----------------
+// ---------------- TEXT CARD RENDERER (KEEP) ----------------
 function generateCard(data) {
   const canvas = createCanvas(1080, 1080);
   const ctx = canvas.getContext("2d");
 
-  // Background
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, 1080, 1080);
 
-  // Title
   ctx.fillStyle = "#000000";
   ctx.font = "50px Tamil";
-drawWrappedText(ctx, data.title, 60, 120, 960, 64);
+  drawWrappedText(ctx, data.title, 60, 120, 960, 64);
 
-
-  // Points
   ctx.font = "36px Tamil";
-let y = 220;
-const maxWidth = 960;
-const lineHeight = 52;
+  let y = 220;
 
-for (const p of data.points) {
-  y = drawWrappedText(ctx, "• " + p, 60, y, maxWidth, lineHeight);
-  y += 10;
-}
-
+  for (const p of data.points) {
+    y = drawWrappedText(ctx, "• " + p, 60, y, 960, 52);
+    y += 10;
+  }
 
   return canvas.toBuffer("image/png");
 }
 
-// ---------------- EXISTING ENDPOINT ----------------
-// JSON → Image (already working)
+// ---------------- ENDPOINT 1 ----------------
+// Manual title + points → text card
 app.post("/generate-card", (req, res) => {
   const { title, points } = req.body;
 
@@ -76,21 +68,17 @@ app.post("/generate-card", (req, res) => {
   res.send(imageBuffer);
 });
 
-// ---------------- NEW ENDPOINT ----------------
-// Tamil Text → AI → Image
+// ---------------- ENDPOINT 2 ----------------
+// Tamil text → AI → text card
 app.post("/ai-generate-card", async (req, res) => {
   try {
     const { text } = req.body;
+    if (!text) return res.status(400).json({ error: "Text is required" });
 
-    if (!text) {
-      return res.status(400).json({ error: "Text is required" });
-    }
-
-    // Call OpenAI
     const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -99,7 +87,7 @@ app.post("/ai-generate-card", async (req, res) => {
           {
             role: "system",
             content:
-              "You are a Tamil text processor. Convert the input Tamil text into ONE short title and 3–5 short bullet points. Output ONLY valid JSON in this format: {\"title\":\"\",\"points\":[]}"
+              "Convert Tamil text into ONE short title and 3–5 bullet points. Output ONLY JSON: {\"title\":\"\",\"points\":[]}"
           },
           { role: "user", content: text }
         ],
@@ -110,17 +98,71 @@ app.post("/ai-generate-card", async (req, res) => {
     const aiData = await aiResponse.json();
     const parsed = JSON.parse(aiData.choices[0].message.content);
 
-    const imageBuffer = generateCard({
-      title: parsed.title,
-      points: parsed.points
+    const imageBuffer = generateCard(parsed);
+    res.setHeader("Content-Type", "image/png");
+    res.send(imageBuffer);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "AI text card failed" });
+  }
+});
+
+// ---------------- ENDPOINT 3 (NEW, IMPORTANT) ----------------
+// Tamil text → AI → FULL AI IMAGE (ChatGPT style)
+app.post("/ai-generate-image", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: "Text is required" });
+
+    // STEP 1: Create safe image prompt
+    const promptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content:
+              "Create a SAFE, neutral image generation prompt for an informational Tamil card. The image must be illustrative, professional, newspaper style. No text inside image. No fake events."
+          },
+          { role: "user", content: text }
+        ],
+        temperature: 0.3
+      })
     });
+
+    const promptData = await promptResponse.json();
+    const imagePrompt = promptData.choices[0].message.content;
+
+    // STEP 2: Generate AI image
+    const imageResponse = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-image-1",
+        prompt: imagePrompt,
+        size: "1024x1024"
+      })
+    });
+
+    const imageData = await imageResponse.json();
+    const imageBase64 = imageData.data[0].b64_json;
+    const imageBuffer = Buffer.from(imageBase64, "base64");
 
     res.setHeader("Content-Type", "image/png");
     res.send(imageBuffer);
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "AI generation failed" });
+    res.status(500).json({ error: "AI image generation failed" });
   }
 });
 
