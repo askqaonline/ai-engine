@@ -115,7 +115,7 @@ app.post("/ai-generate-image", async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: "Text is required" });
 
-    // STEP 1: Create safe image prompt
+    // STEP 1: Generate a CLEAN image prompt
     const promptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -128,7 +128,7 @@ app.post("/ai-generate-image", async (req, res) => {
           {
             role: "system",
             content:
-              "Create a SAFE, neutral image generation prompt for an informational Tamil card. The image must be illustrative, professional, newspaper style. No text inside image. No fake events."
+              "Convert the Tamil text into ONE SHORT English image description for an informative illustration. No quotes. No JSON. No explanations. Just a clean descriptive sentence."
           },
           { role: "user", content: text }
         ],
@@ -137,7 +137,13 @@ app.post("/ai-generate-image", async (req, res) => {
     });
 
     const promptData = await promptResponse.json();
-    const imagePrompt = promptData.choices[0].message.content;
+
+    if (!promptData.choices) {
+      console.error("Prompt error:", promptData);
+      return res.status(500).json({ error: "Prompt generation failed" });
+    }
+
+    const imagePrompt = promptData.choices[0].message.content.trim();
 
     // STEP 2: Generate AI image
     const imageResponse = await fetch("https://api.openai.com/v1/images/generations", {
@@ -154,20 +160,20 @@ app.post("/ai-generate-image", async (req, res) => {
     });
 
     const imageData = await imageResponse.json();
-    const imageBase64 = imageData.data[0].b64_json;
-    const imageBuffer = Buffer.from(imageBase64, "base64");
+
+    // IMPORTANT: Validate response
+    if (!imageData.data || !imageData.data[0]?.b64_json) {
+      console.error("Image API error:", imageData);
+      return res.status(500).json({ error: "Image API returned no image" });
+    }
+
+    const imageBuffer = Buffer.from(imageData.data[0].b64_json, "base64");
 
     res.setHeader("Content-Type", "image/png");
     res.send(imageBuffer);
 
   } catch (err) {
-    console.error(err);
+    console.error("Server crash:", err);
     res.status(500).json({ error: "AI image generation failed" });
   }
-});
-
-// ---------------- SERVER ----------------
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Image API running on port", PORT);
 });
