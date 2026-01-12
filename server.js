@@ -1,27 +1,31 @@
 import express from "express";
 import { createCanvas, registerFont } from "canvas";
-import fetch from "node-fetch";
+import fs from "fs";
 
 const app = express();
 app.use(express.json());
 
-// ---------------- FONT ----------------
-registerFont("./fonts/NotoSansTamil-Regular.ttf", {
-  family: "Tamil"
-});
+// ---------------- SAFE FONT LOAD ----------------
+const fontPath = "./fonts/NotoSansTamil-Regular.ttf";
+if (fs.existsSync(fontPath)) {
+  registerFont(fontPath, { family: "Tamil" });
+  console.log("Tamil font loaded");
+} else {
+  console.warn("Tamil font not found, skipping font load");
+}
 
 // ---------------- TEXT WRAP HELPER ----------------
 function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
   const words = text.split(" ");
   let line = "";
 
-  for (let n = 0; n < words.length; n++) {
-    const testLine = line + words[n] + " ";
+  for (let i = 0; i < words.length; i++) {
+    const testLine = line + words[i] + " ";
     const metrics = ctx.measureText(testLine);
 
-    if (metrics.width > maxWidth && n > 0) {
+    if (metrics.width > maxWidth && i > 0) {
       ctx.fillText(line, x, y);
-      line = words[n] + " ";
+      line = words[i] + " ";
       y += lineHeight;
     } else {
       line = testLine;
@@ -31,7 +35,7 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
   return y + lineHeight;
 }
 
-// ---------------- TEXT CARD RENDERER (KEEP) ----------------
+// ---------------- TEXT CARD RENDERER ----------------
 function generateCard(data) {
   const canvas = createCanvas(1080, 1080);
   const ctx = canvas.getContext("2d");
@@ -96,9 +100,15 @@ app.post("/ai-generate-card", async (req, res) => {
     });
 
     const aiData = await aiResponse.json();
-    const parsed = JSON.parse(aiData.choices[0].message.content);
 
+    if (!aiData.choices || !aiData.choices[0]) {
+      console.error("AI error:", aiData);
+      return res.status(500).json({ error: "AI response invalid" });
+    }
+
+    const parsed = JSON.parse(aiData.choices[0].message.content);
     const imageBuffer = generateCard(parsed);
+
     res.setHeader("Content-Type", "image/png");
     res.send(imageBuffer);
 
@@ -108,87 +118,65 @@ app.post("/ai-generate-card", async (req, res) => {
   }
 });
 
-// ---------------- ENDPOINT 3 (NEW, IMPORTANT) ----------------
+// ---------------- ENDPOINT 3 ----------------
 // Tamil text → AI → FULL AI IMAGE (ChatGPT style)
 app.post("/ai-generate-image", async (req, res) => {
   try {
     const { text } = req.body;
-    if (!text) {
-      return res.status(400).json({ error: "Text is required" });
-    }
+    if (!text) return res.status(400).json({ error: "Text is required" });
 
-    // ---- STEP 1: PROMPT GENERATION ----
-    const promptResponse = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content:
-                "Convert the Tamil text into ONE short English description for an informative illustration. No JSON. No quotes. One sentence only."
-            },
-            { role: "user", content: text }
-          ],
-          temperature: 0.3
-        })
-      }
-    );
+    // STEP 1: Create clean image prompt
+    const promptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content:
+              "Convert the Tamil text into ONE short English sentence describing an informative illustration. No JSON. No quotes."
+          },
+          { role: "user", content: text }
+        ],
+        temperature: 0.3
+      })
+    });
 
     const promptData = await promptResponse.json();
 
-    if (
-      !promptData ||
-      !promptData.choices ||
-      !promptData.choices[0] ||
-      !promptData.choices[0].message
-    ) {
-      console.error("Prompt API error:", promptData);
+    if (!promptData.choices || !promptData.choices[0]) {
+      console.error("Prompt error:", promptData);
       return res.status(500).json({ error: "Prompt generation failed" });
     }
 
     const imagePrompt = promptData.choices[0].message.content.trim();
 
-    // ---- STEP 2: IMAGE GENERATION ----
-    const imageResponse = await fetch(
-      "https://api.openai.com/v1/images/generations",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "gpt-image-1",
-          prompt: imagePrompt,
-          size: "1024x1024"
-        })
-      }
-    );
+    // STEP 2: Generate AI image
+    const imageResponse = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-image-1",
+        prompt: imagePrompt,
+        size: "1024x1024"
+      })
+    });
 
     const imageData = await imageResponse.json();
 
-    if (
-      !imageData ||
-      !imageData.data ||
-      !imageData.data[0] ||
-      !imageData.data[0].b64_json
-    ) {
+    if (!imageData.data || !imageData.data[0]?.b64_json) {
       console.error("Image API error:", imageData);
       return res.status(500).json({ error: "Image generation failed" });
     }
 
-    const imageBuffer = Buffer.from(
-      imageData.data[0].b64_json,
-      "base64"
-    );
-
+    const imageBuffer = Buffer.from(imageData.data[0].b64_json, "base64");
     res.setHeader("Content-Type", "image/png");
     res.send(imageBuffer);
 
@@ -198,3 +186,8 @@ app.post("/ai-generate-image", async (req, res) => {
   }
 });
 
+// ---------------- SERVER ----------------
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("Image API running on port", PORT);
+});
