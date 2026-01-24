@@ -1,193 +1,131 @@
 import express from "express";
-import { createCanvas, registerFont } from "canvas";
-import fs from "fs";
 
 const app = express();
 app.use(express.json());
 
-// ---------------- SAFE FONT LOAD ----------------
-const fontPath = "./fonts/NotoSansTamil-Regular.ttf";
-if (fs.existsSync(fontPath)) {
-  registerFont(fontPath, { family: "Tamil" });
-  console.log("Tamil font loaded");
-} else {
-  console.warn("Tamil font not found, skipping font load");
-}
-
-// ---------------- TEXT WRAP HELPER ----------------
-function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
-  const words = text.split(" ");
-  let line = "";
-
-  for (let i = 0; i < words.length; i++) {
-    const testLine = line + words[i] + " ";
-    const metrics = ctx.measureText(testLine);
-
-    if (metrics.width > maxWidth && i > 0) {
-      ctx.fillText(line, x, y);
-      line = words[i] + " ";
-      y += lineHeight;
-    } else {
-      line = testLine;
-    }
-  }
-  ctx.fillText(line, x, y);
-  return y + lineHeight;
-}
-
-// ---------------- TEXT CARD RENDERER ----------------
-function generateCard(data) {
-  const canvas = createCanvas(1080, 1080);
-  const ctx = canvas.getContext("2d");
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, 1080, 1080);
-
-  ctx.fillStyle = "#000000";
-  ctx.font = "50px Tamil";
-  drawWrappedText(ctx, data.title, 60, 120, 960, 64);
-
-  ctx.font = "36px Tamil";
-  let y = 220;
-
-  for (const p of data.points) {
-    y = drawWrappedText(ctx, "• " + p, 60, y, 960, 52);
-    y += 10;
-  }
-
-  return canvas.toBuffer("image/png");
-}
-
-// ---------------- ENDPOINT 1 ----------------
-// Manual title + points → text card
-app.post("/generate-card", (req, res) => {
-  const { title, points } = req.body;
-
-  if (!title || !points) {
-    return res.status(400).json({ error: "Invalid input" });
-  }
-
-  const imageBuffer = generateCard({ title, points });
-  res.setHeader("Content-Type", "image/png");
-  res.send(imageBuffer);
+// --------------------------------------------------
+// HEALTH CHECK
+// --------------------------------------------------
+app.get("/", (req, res) => {
+  res.send("ASKQA AI Image Engine is running ✅");
 });
 
-// ---------------- ENDPOINT 2 ----------------
-// Tamil text → AI → text card
-app.post("/ai-generate-card", async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "Text is required" });
-
-    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "Convert Tamil text into ONE short title and 3–5 bullet points. Output ONLY JSON: {\"title\":\"\",\"points\":[]}"
-          },
-          { role: "user", content: text }
-        ],
-        temperature: 0.2
-      })
-    });
-
-    const aiData = await aiResponse.json();
-
-    if (!aiData.choices || !aiData.choices[0]) {
-      console.error("AI error:", aiData);
-      return res.status(500).json({ error: "AI response invalid" });
-    }
-
-    const parsed = JSON.parse(aiData.choices[0].message.content);
-    const imageBuffer = generateCard(parsed);
-
-    res.setHeader("Content-Type", "image/png");
-    res.send(imageBuffer);
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "AI text card failed" });
-  }
-});
-
-// ---------------- ENDPOINT 3 ----------------
-// Tamil text → AI → FULL AI IMAGE (ChatGPT style)
+// --------------------------------------------------
+// AI IMAGE GENERATION
+// Tamil text → AI → FULL IMAGE (ChatGPT style)
+// --------------------------------------------------
 app.post("/ai-generate-image", async (req, res) => {
   try {
     const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "Text is required" });
 
-    // STEP 1: Create clean image prompt
-    const promptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "Convert the Tamil text into ONE short English sentence describing an informative illustration. No JSON. No quotes."
-          },
-          { role: "user", content: text }
-        ],
-        temperature: 0.3
-      })
-    });
+    if (!text || text.trim().length < 10) {
+      return res.status(400).json({
+        error: "Valid Tamil text is required"
+      });
+    }
+
+    // --------------------------------------------------
+    // STEP 1: CREATE IMAGE PROMPT (Tamil → English visual idea)
+    // --------------------------------------------------
+    const promptResponse = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content:
+                "Convert the Tamil information into ONE clear English description for an informative illustration. Focus on scene, objects, mood. Do not include any text in the image. One short paragraph only."
+            },
+            {
+              role: "user",
+              content: text
+            }
+          ],
+          temperature: 0.3
+        })
+      }
+    );
 
     const promptData = await promptResponse.json();
 
-    if (!promptData.choices || !promptData.choices[0]) {
-      console.error("Prompt error:", promptData);
-      return res.status(500).json({ error: "Prompt generation failed" });
+    if (!promptData?.choices?.[0]?.message?.content) {
+      console.error("PROMPT ERROR:", promptData);
+      return res.status(500).json({
+        error: "Prompt generation failed",
+        details: promptData
+      });
     }
 
     const imagePrompt = promptData.choices[0].message.content.trim();
 
-    // STEP 2: Generate AI image
-    const imageResponse = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-image-1",
-        prompt: imagePrompt,
-        size: "1024x1024"
-      })
-    });
+    // --------------------------------------------------
+    // STEP 2: GENERATE IMAGE (Prompt → Image)
+    // --------------------------------------------------
+    const imageResponse = await fetch(
+      "https://api.openai.com/v1/images/generations",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "gpt-image-1",
+          prompt: imagePrompt,
+          size: "1024x1024"
+        })
+      }
+    );
 
     const imageData = await imageResponse.json();
 
-    if (!imageData.data || !imageData.data[0]?.b64_json) {
-      console.error("Image API error:", imageData);
-      return res.status(500).json({ error: "Image generation failed" });
+    // 🔥 IMPORTANT DEBUG LOG (keep this)
+    console.log("OPENAI IMAGE RESPONSE:", JSON.stringify(imageData, null, 2));
+
+    if (imageData.error) {
+      return res.status(500).json({
+        error: "OpenAI Image API error",
+        details: imageData.error
+      });
     }
 
-    const imageBuffer = Buffer.from(imageData.data[0].b64_json, "base64");
+    if (!imageData?.data?.[0]?.b64_json) {
+      return res.status(500).json({
+        error: "No image returned by OpenAI",
+        details: imageData
+      });
+    }
+
+    const imageBuffer = Buffer.from(
+      imageData.data[0].b64_json,
+      "base64"
+    );
+
     res.setHeader("Content-Type", "image/png");
     res.send(imageBuffer);
 
   } catch (err) {
-    console.error("Server crash:", err);
-    res.status(500).json({ error: "AI image generation failed" });
+    console.error("SERVER ERROR:", err);
+    res.status(500).json({
+      error: "Internal server error",
+      details: err.message
+    });
   }
 });
 
-// ---------------- SERVER ----------------
-const PORT = process.env.PORT || 3000;
+// --------------------------------------------------
+// SERVER START
+// --------------------------------------------------
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log("Image API running on port", PORT);
+  console.log(`ASKQA AI Image Engine running on port ${PORT}`);
 });
+
+//https://askqa-ai.onrender.com/ai-generate-image?Content-Type=application%2Fjson
