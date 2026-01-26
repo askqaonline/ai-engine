@@ -1,14 +1,13 @@
 import express from "express";
 import fetch from "node-fetch";
 import fs from "fs";
-import path from "path";
-import { generateAskqaImage } from "./image.js";
+import generateAskqaImage from "./image.js";
 
 const app = express();
 app.use(express.json());
 
 /* ==================================================
-   META WEBHOOK VERIFICATION (ONE-TIME)
+   META WEBHOOK VERIFICATION
 ================================================== */
 app.get("/webhook", (req, res) => {
   const VERIFY_TOKEN = "askqa_313";
@@ -20,9 +19,8 @@ app.get("/webhook", (req, res) => {
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     console.log("Webhook verified ✅");
     return res.status(200).send(challenge);
-  } else {
-    return res.sendStatus(403);
   }
+  return res.sendStatus(403);
 });
 
 /* ==================================================
@@ -45,7 +43,7 @@ app.post("/ai-generate-image", async (req, res) => {
       });
     }
 
-    /* ---------- STEP 1: Tamil → English image idea ---------- */
+    /* ---------- STEP 1: TEXT → IMAGE PROMPT ---------- */
     const promptResponse = await fetch(
       "https://api.openai.com/v1/chat/completions",
       {
@@ -60,7 +58,7 @@ app.post("/ai-generate-image", async (req, res) => {
             {
               role: "system",
               content:
-                "Create a clean, minimal, India-style illustration background for a Tamil public information card. No text, no English words, no documents, no notice boards. Abstract or symbolic visuals only."
+                "Create a clean, minimal, India-style illustration background for a Tamil public information card. No text, no English words. Abstract visuals only."
             },
             {
               role: "user",
@@ -75,7 +73,7 @@ app.post("/ai-generate-image", async (req, res) => {
     const promptData = await promptResponse.json();
     const imagePrompt = promptData.choices[0].message.content.trim();
 
-    /* ---------- STEP 2: Generate background image ---------- */
+    /* ---------- STEP 2: BACKGROUND IMAGE ---------- */
     const imageResponse = await fetch(
       "https://api.openai.com/v1/images/generations",
       {
@@ -96,12 +94,12 @@ app.post("/ai-generate-image", async (req, res) => {
     const bgBuffer = Buffer.from(imageData.data[0].b64_json, "base64");
     fs.writeFileSync("card.png", bgBuffer);
 
-    /* ---------- STEP 3: Simple Tamil text split ---------- */
+    /* ---------- STEP 3: TEXT SPLIT ---------- */
     const lines = text.split("\n").map(t => t.trim()).filter(Boolean);
     const title = lines[0];
     const points = lines.slice(1, 5);
 
-    /* ---------- STEP 4: Final ASKQA card ---------- */
+    /* ---------- STEP 4: FINAL CARD ---------- */
     await generateAskqaImage({
       backgroundImage: "card.png",
       outputImage: "final.png",
@@ -109,7 +107,7 @@ app.post("/ai-generate-image", async (req, res) => {
       points
     });
 
-    /* ---------- STEP 5: Send image ---------- */
+    /* ---------- STEP 5: SEND IMAGE ---------- */
     return res.sendFile("final.png", {
       root: process.cwd(),
       headers: { "Content-Type": "image/png" }
