@@ -10,7 +10,7 @@ app.use(express.json());
    META WEBHOOK VERIFICATION
 ================================================== */
 app.get("/webhook", (req, res) => {
-  const VERIFY_TOKEN = "askqa123";  // MUST match webhook setup
+  const VERIFY_TOKEN = "askqa313";  // MUST match webhook setup
   
   console.log("🔐 Webhook verification attempt:", req.query);
   
