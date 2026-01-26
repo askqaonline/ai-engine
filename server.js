@@ -23,6 +23,30 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
+app.post("/webhook", (req, res) => {
+  // Respond immediately to Meta
+  res.sendStatus(200);
+
+  try {
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const message = value?.messages?.[0];
+
+    if (!message) return;
+
+    const from = message.from;
+    const text = message.text?.body || "";
+
+    console.log("📩 New WhatsApp Message");
+    console.log("From:", from);
+    console.log("Text:", text);
+
+  } catch (err) {
+    console.error("Webhook POST error:", err);
+  }
+});
+
 /* ==================================================
    HEALTH CHECK
 ================================================== */
