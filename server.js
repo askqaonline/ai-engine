@@ -253,5 +253,6 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 ASKQA AI Image Engine running on port ${PORT}`);
   console.log(`🔗 Webhook URL: https://ai-engine-78zd.onrender.com/webhook`);
-  console.log(`🔐 Verify Token: askqa123`);
+  console.log(`🔐 Verify Token: askqa313`);
+
 });
